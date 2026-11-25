@@ -230,6 +230,15 @@ protected:
     bool prepare_compute_graph(get_graph_cb_t get_graph,
                                ggml_cgraph** gf_out);
 
+    struct GraphUsage {
+        bool supported              = true;  // every op accepted by the runtime backend, size limits included
+        size_t largest_tensor_bytes = 0;
+    };
+
+    std::optional<GraphUsage> get_graph_usage(get_graph_cb_t get_graph);
+
+    void set_last_compute_status(ggml_status status) { last_compute_status_ = status; }
+
     size_t reusable_compute_buffer_bytes() const {
         return execution_session_.compute_bytes();
     }
@@ -338,6 +347,10 @@ public:
 
     void set_weight_adapter(const std::shared_ptr<WeightAdapter>& adapter) {
         weight_adapter = adapter;
+    }
+
+    void set_graph_scratch_bytes(size_t bytes) {
+        execution_session_.set_scratch_bytes(bytes);
     }
 
     void set_max_graph_vram_bytes(size_t max_vram_bytes) {

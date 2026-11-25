@@ -745,6 +745,12 @@ struct AutoEncoderKL : public VAE {
         return gf;
     }
 
+    std::optional<GraphUsage> get_decode_graph_usage(const sd::Tensor<float>& z) override {
+        return get_graph_usage([&]() -> ggml_cgraph* {
+            return build_graph(z, true);
+        });
+    }
+
     sd::Tensor<float> _compute(const int n_threads,
                                const sd::Tensor<float>& z,
                                bool decode_graph) override {

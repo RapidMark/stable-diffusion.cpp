@@ -48,6 +48,7 @@ namespace sd {
         std::unordered_set<ggml_tensor*> params_;
         std::vector<ggml_backend_t> extra_backends_;
         size_t max_backend_bytes_ = 0;
+        size_t scratch_bytes_     = 0;
         bool layer_split_enabled_ = false;
         std::vector<size_t> backend_limits_;
         ggml_graph_cut::PlanCache plan_cache_;
@@ -74,6 +75,8 @@ namespace sd {
         size_t compute_bytes() const { return workspace_.bytes(backend_); }
         void clear_plan_cache() { plan_cache_.graph_cut_plans.clear(); }
         void set_max_backend_bytes(size_t bytes) { max_backend_bytes_ = bytes; }
+        // Device memory a graph's kernels take outside the planned compute buffer.
+        void set_scratch_bytes(size_t bytes) { scratch_bytes_ = bytes; }
         void set_layer_split_enabled(bool enabled);
         void set_backend_limits(const std::vector<size_t>& limits);
         void set_runtime_backends(const std::vector<ggml_backend_t>& backends);

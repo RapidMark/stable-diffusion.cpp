@@ -158,6 +158,27 @@ bool GGMLRunner::prepare_compute_graph(get_graph_cb_t get_graph,
     return true;
 }
 
+std::optional<GGMLRunner::GraphUsage> GGMLRunner::get_graph_usage(get_graph_cb_t get_graph) {
+    ggml_cgraph* gf = nullptr;
+    if (!prepare_compute_graph(get_graph, &gf)) {
+        return std::nullopt;
+    }
+    GraphUsage usage;
+    for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
+        ggml_tensor* node = ggml_graph_node(gf, i);
+        if (node->op == GGML_OP_NONE || node->op == GGML_OP_VIEW || node->op == GGML_OP_RESHAPE ||
+            node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE) {
+            continue;
+        }
+        usage.largest_tensor_bytes = std::max(usage.largest_tensor_bytes, ggml_nbytes(node));
+        if (usage.supported && !ggml_backend_supports_op(runtime_backend, node)) {
+            usage.supported = false;
+        }
+    }
+    free_compute_ctx();
+    return usage;
+}
+
 bool GGMLRunner::runner_start() {
     return execution_engine_->start(execution_session_);
 }

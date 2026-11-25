@@ -419,7 +419,7 @@ namespace sd {
         for (const auto& size : sizes) {
             const size_t retained    = retained_runtime_buffer_bytes(size.backend);
             const size_t reusable    = session_.workspace_.bytes(size.backend);
-            const size_t cache_bytes = size.backend == session_.backend_ ? pending_cache_bytes : 0;
+            const size_t cache_bytes = size.backend == session_.backend_ ? add_bytes(pending_cache_bytes, session_.scratch_bytes_) : 0;
             const size_t pending     = add_bytes(size.bytes > reusable ? size.bytes - reusable : 0, cache_bytes);
             size_t limit             = session_.max_backend_bytes_;
             if (is_multi_device()) {

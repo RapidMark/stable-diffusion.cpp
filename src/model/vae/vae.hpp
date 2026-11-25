@@ -26,6 +26,30 @@ protected:
                                        const sd::Tensor<float>& z,
                                        bool decode_graph) = 0;
 
+    virtual std::optional<GraphUsage> get_decode_graph_usage(const sd::Tensor<float>& z) {
+        SD_UNUSED(z);
+        return std::nullopt;
+    }
+
+    // Checked before an untiled decode, because past these limits the backend crashes
+    // instead of failing an allocation the caller could retry with tiling.
+    bool prepare_untiled_decode(const sd::Tensor<float>& z) {
+        if (sd_backend_is_cpu(runtime_backend)) {
+            return true;
+        }
+        auto usage = get_decode_graph_usage(z);
+        if (!usage.has_value()) {
+            return true;
+        }
+        if (!usage->supported) {
+            LOG_WARN("vae decode graph exceeds the backend tensor size limits");
+            return false;
+        }
+        // Backend kernels can take scratch about the size of their largest tensor.
+        set_graph_scratch_bytes(usage->largest_tensor_bytes);
+        return true;
+    }
+
     virtual bool supports_temporal_tiling(VAETemporalDirection direction) const {
         SD_UNUSED(direction);
         return false;
@@ -350,11 +374,14 @@ public:
                 tiling_params,
                 "vae decode compute failed while processing a tile",
                 silent);
+        } else if (!prepare_untiled_decode(input)) {
+            set_last_compute_status(GGML_STATUS_ALLOC_FAILED);
         } else {
             output = compute_with_temporal_tiling(n_threads,
                                                   input,
                                                   VAETemporalDirection::DECODE,
                                                   tiling_params);
+            set_graph_scratch_bytes(0);
         }
 
         if (auto_end) {

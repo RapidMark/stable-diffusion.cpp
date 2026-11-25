@@ -769,15 +769,32 @@ ggml_tensor* ggml_ext_attention_ext(GGMLRunnerContext* runner_ctx,
         v = ggml_ext_cont(runner_ctx, ggml_permute(ctx, v, 1, 2, 0, 3));  // [N, n_kv_head, d_head, L_k]
         v = ggml_reshape_3d(ctx, v, L_k, d_head, n_kv_head * N);          // [N * n_kv_head, d_head, L_k]
 
-        auto kq = ggml_mul_mat(ctx, k, q);  // [N * n_head, L_q, L_k]
-        ggml_prec_set_acc(kq, GGML_PREC_F32);
-        kq = ggml_scale_inplace(ctx, kq, scale);
-        if (mask) {
-            kq = ggml_add_inplace(ctx, kq, mask);
-        }
-        kq = ggml_soft_max_inplace(ctx, kq);
+        auto attend = [&](ggml_tensor* q_part) {
+            auto kq = ggml_mul_mat(ctx, k, q_part);  // [N * n_head, L_q, L_k]
+            ggml_prec_set_acc(kq, GGML_PREC_F32);
+            kq = ggml_scale_inplace(ctx, kq, scale);
+            if (mask) {
+                kq = ggml_add_inplace(ctx, kq, mask);
+            }
+            kq = ggml_soft_max_inplace(ctx, kq);
+            return ggml_mul_mat(ctx, v, kq);  // [N * n_head, L_q, d_head]
+        };
 
-        kqv = ggml_mul_mat(ctx, v, kq);  // [N * n_head, L_q, d_head]
+        // Backends cap a single tensor (Vulkan buffer range, 32-bit element counts),
+        // so split very large score matrices by query rows.
+        const int64_t max_kq_elements = 1ll << 29;
+        const int64_t kq_elements     = L_k * L_q * q->ne[2];
+        if (mask == nullptr && kq_elements > max_kq_elements) {
+            const int64_t rows = std::max<int64_t>(1, max_kq_elements / (L_k * q->ne[2]));
+            for (int64_t row = 0; row < L_q; row += rows) {
+                const int64_t n = std::min(rows, L_q - row);
+                auto q_part     = ggml_view_3d(ctx, q, q->ne[0], n, q->ne[2], q->nb[1], q->nb[2], row * q->nb[1]);
+                auto part       = attend(q_part);
+                kqv             = kqv == nullptr ? part : ggml_concat(ctx, kqv, part, 1);
+            }
+        } else {
+            kqv = attend(q);
+        }
 
         kqv = ggml_reshape_4d(ctx, kqv, d_head, L_q, n_head, N);  // [N, n_head, L_q, d_head]
         kqv = ggml_permute(ctx, kqv, 0, 2, 1, 3);                 // [N, L_q, n_head, d_head]
