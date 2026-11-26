@@ -769,15 +769,25 @@ ggml_tensor* ggml_ext_attention_ext(GGMLRunnerContext* runner_ctx,
         v = ggml_ext_cont(runner_ctx, ggml_permute(ctx, v, 1, 2, 0, 3));  // [N, n_kv_head, d_head, L_k]
         v = ggml_reshape_3d(ctx, v, L_k, d_head, n_kv_head * N);          // [N * n_kv_head, d_head, L_k]
 
-        auto kq = ggml_mul_mat(ctx, k, q);  // [N * n_head, L_q, L_k]
-        ggml_prec_set_acc(kq, GGML_PREC_F32);
-        kq = ggml_scale_inplace(ctx, kq, scale);
-        if (mask) {
-            kq = ggml_add_inplace(ctx, kq, mask);
+        // split large attention so the score matrix stays within backend limits
+        int64_t chunk = L_q;
+        if (mask == nullptr) {
+            chunk = std::max<int64_t>(1, (1ll << 29) / (L_k * q->ne[2]));
         }
-        kq = ggml_soft_max_inplace(ctx, kq);
+        std::vector<ggml_tensor*> outs;
+        for (int64_t i = 0; i < L_q; i += chunk) {
+            auto q_i = chunk < L_q ? ggml_ext_slice(runner_ctx, q, 1, i, std::min(i + chunk, L_q)) : q;
+            auto kq  = ggml_mul_mat(ctx, k, q_i);  // [N * n_head, chunk, L_k]
+            ggml_prec_set_acc(kq, GGML_PREC_F32);
+            kq = ggml_scale_inplace(ctx, kq, scale);
+            if (mask) {
+                kq = ggml_add_inplace(ctx, kq, mask);
+            }
+            kq = ggml_soft_max_inplace(ctx, kq);
 
-        kqv = ggml_mul_mat(ctx, v, kq);  // [N * n_head, L_q, d_head]
+            outs.push_back(ggml_mul_mat(ctx, v, kq));  // [N * n_head, chunk, d_head]
+        }
+        kqv = ggml_ext_vec_concat(runner_ctx, outs, 1);
 
         kqv = ggml_reshape_4d(ctx, kqv, d_head, L_q, n_head, N);  // [N, n_head, L_q, d_head]
         kqv = ggml_permute(ctx, kqv, 0, 2, 1, 3);                 // [N, L_q, n_head, d_head]
